@@ -1,0 +1,3 @@
+python("import CoDMayaTools");
+python("import SEToolsPlugin");
+python("import CoDCharacterTools");
