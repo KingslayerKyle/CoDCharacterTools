@@ -117,7 +117,7 @@ def create_joint_attributes( joint ):
 
 def create_new_rig( namespace, joints_with_attributes ):
     # Deselect anything that's already selected
-    cmds.select( deselect = True )
+    cmds.select( clear = True )
 
     # Abort if something goes wrong
     if len( cmds.ls( "*" + namespace + ":" + "*" ) ) > 0:
@@ -137,15 +137,15 @@ def create_new_rig( namespace, joints_with_attributes ):
 
     # Create new joints
     for joint_with_attributes in joints_with_attributes:
-        cmds.select( deselect = True )
+        cmds.select( clear = True )
         cmds.joint( name = namespace + ":" + joint_with_attributes["name"] )
-        cmds.select( deselect = True )
+        cmds.select( clear = True )
 
     # Parent them
     for joint_with_attributes in joints_with_attributes:
         if "Joints" not in joint_with_attributes["parent"]:
             cmds.parent( namespace + ":" + joint_with_attributes["name"], namespace + ":" + joint_with_attributes["parent"] )
-            cmds.select( deselect = True )
+            cmds.select( clear = True )
 
     # Group them
     for joint_with_attributes in joints_with_attributes:
@@ -153,7 +153,7 @@ def create_new_rig( namespace, joints_with_attributes ):
             cmds.group( namespace + ":" + joint_with_attributes["name"], name = namespace + ":Joints" )
     
     # Deselect after grouping
-    cmds.select( deselect = True )
+    cmds.select( clear = True )
 
     # Set attributes
     for joint_with_attributes in joints_with_attributes:
@@ -215,7 +215,7 @@ def get_joints_with_attributes( input = [] ):
 
 def get_mirror_joint_attributes( joint_to_mirror ):
     # Deselect anything that's already selected
-    cmds.select( deselect = True )
+    cmds.select( clear = True )
 
     # Stop if joint doesn't exist
     if not cmds.objExists( joint_to_mirror ):
@@ -252,7 +252,7 @@ def get_mirror_joint_attributes( joint_to_mirror ):
 
     # Store mirrored joint
     mirrored_joint = cmds.ls( selection = True, long = True )[0]
-    cmds.select( deselect = True )
+    cmds.select( clear = True )
 
     # Create array for mirrored joints
     joints = [ mirrored_joint ]
@@ -324,7 +324,7 @@ def get_targets_dir():
 
 def import_target_rig( file_name ):
     # Deselect anything that's already selected
-    cmds.select( deselect = True )
+    cmds.select( clear = True )
 
     # Create array for joints
     joints = []
@@ -352,7 +352,7 @@ def import_target_rig( file_name ):
     # Delete the empty group that was created for meshes
     if cmds.objExists( os.path.splitext( file_name )[0] ):
         cmds.delete( os.path.splitext( file_name )[0] )
-        cmds.select( deselect = True )
+        cmds.select( clear = True )
 
     # Store joints attributes for the target rig
     for group in get_groups():
@@ -414,7 +414,7 @@ def lock_all_weights( enable = True ):
 
 def rotate_models():
     # Deselect anything that's already selected
-    cmds.select( deselect = True )
+    cmds.select( clear = True )
 
     for joint_with_attributes in get_joints_with_attributes():
         for joint in get_joints():
@@ -426,11 +426,11 @@ def rotate_models():
                         cmds.select( joint )
                         cmds.rotate( joint_with_attributes["rotateXWorld"], joint_with_attributes["rotateYWorld"], joint_with_attributes["rotateZWorld"] )
                         cmds.move( joint_with_attributes["translateXWorld"], joint_with_attributes["translateYWorld"], joint_with_attributes["translateZWorld"] )
-                        cmds.select( deselect = True )
+                        cmds.select( clear = True )
 
 def semodel_unique_names():
     # Deselect anything that's already selected
-    cmds.select( deselect = True )
+    cmds.select( clear = True )
 
     num = 0
 
@@ -466,7 +466,7 @@ def set_vertex_colors():
     for mesh in get_meshes():
         cmds.select( mesh )
         cmds.polyColorPerVertex( alpha = 1, rgb = ( 1, 1, 1 ), colorDisplayOption = True )
-        cmds.select( deselect = True )
+        cmds.select( clear = True )
 
 def set_zero_rotations( nodes ):
     if len( nodes ) < 1:
@@ -480,7 +480,7 @@ def set_zero_rotations( nodes ):
 
 def transfer_weight( source, target ):
     # Deselect anything that's already selected
-    cmds.select( deselect = True )
+    cmds.select( clear = True )
 
     # Make sure no animation is in the scene
     if len( cmds.ls( "*SENotes*" ) ) > 0:
@@ -529,11 +529,11 @@ def transfer_weight( source, target ):
     # Set tool back to select
     cmds.setToolTo( "selectSuperContext" )
     enable_x_ray( False )
-    cmds.select( deselect = True )
+    cmds.select( clear = True )
 
 def rig_combiner( show_message = True ):
     # Deselect anything that's already selected
-    cmds.select( deselect = True )
+    cmds.select( clear = True )
 
     # Make sure the scene isn't empty
     if len( get_joints() + get_meshes() ) < 1:
@@ -561,7 +561,7 @@ def rig_combiner( show_message = True ):
             cmds.select( group )
             mel.eval( "CopySelected" )
             mel.eval( "PasteSelected copy" )
-            cmds.select( deselect = True )
+            cmds.select( clear = True )
 
     # Create new rig
     create_new_rig( "COMBINED", joints_with_attributes )
@@ -582,7 +582,7 @@ def rig_combiner( show_message = True ):
 
     # Bind combined joints
     for mesh in get_meshes():
-        cmds.select( deselect = True )
+        cmds.select( clear = True )
 
         if( "pasted__" in mesh ):
             for joint in cmds.skinCluster( get_skincluster_for_mesh( mesh ), query = True, influence = True ):
@@ -591,7 +591,7 @@ def rig_combiner( show_message = True ):
 
             cmds.skinCluster( get_selection(), mesh.split("pasted__")[-1], toSelectedBones = True, maximumInfluences = 15, obeyMaxInfluences = True, dropoffRate = 5.0, removeUnusedInfluence = False, normalizeWeights = 1 )
         
-        cmds.select( deselect = True )
+        cmds.select( clear = True )
 
     # Copy skinweights from old rigs to combined rig
     for mesh in get_meshes():
@@ -613,7 +613,7 @@ def rig_combiner( show_message = True ):
     #set_vertex_colors()
 
     # Deselect anything that's already selected
-    cmds.select( deselect = True )
+    cmds.select( clear = True )
 
     # Done
     if show_message:
@@ -622,7 +622,7 @@ def rig_combiner( show_message = True ):
 
 def rig_converter( target_rig, rig_name ):
     # Deselect anything that's already selected
-    cmds.select( deselect = True )
+    cmds.select( clear = True )
 
     # Make sure the scene isn't empty
     if len( get_joints() + get_meshes() ) < 1:
@@ -652,39 +652,39 @@ def rig_converter( target_rig, rig_name ):
     for joint in rename_joints:
         if cmds.objExists( joint ):
             cmds.rename( joint, rename_joints[joint] )
-            cmds.select( deselect = True )
+            cmds.select( clear = True )
 
     # Get rid of useless joints for viewhands
     if "Viewhands" in rig_name:
         if cmds.objExists( "j_clavicle_le" ) and cmds.objExists( "j_shoulder_le" ) and cmds.objExists( "j_clavicle_ri" ) and cmds.objExists( "j_shoulder_ri" ):
             # Take them out of groups
-            cmds.select( deselect = True )
+            cmds.select( clear = True )
             cmds.parent( "j_shoulder_le", world = True )
 
-            cmds.select( deselect = True )
+            cmds.select( clear = True )
             cmds.parent( "j_shoulder_ri", world = True )
 
             # Deleting like this using mel will transfer the weights, because sometimes we have weights on clavicle joints
-            cmds.select( deselect = True )
+            cmds.select( clear = True )
             cmds.select( "j_clavicle_le" )
             mel.eval( "Delete" )
 
-            cmds.select( deselect = True )
+            cmds.select( clear = True )
             cmds.select( "j_clavicle_ri" )
             mel.eval( "Delete" )
 
             # Get rid of everything else
-            cmds.select( deselect = True )
+            cmds.select( clear = True )
             for group in get_groups():
                 if "Joints" in group:
                     cmds.delete( group )
 
             # Create this again now and group because it's expected to be there
-            cmds.select( deselect = True )
+            cmds.select( clear = True )
             cmds.select( "j_shoulder_le", add = True )
             cmds.select( "j_shoulder_ri", add = True )
             cmds.group( name = "Joints" )
-            cmds.select( deselect = True )
+            cmds.select( clear = True )
 
     # Source rig
     source_rig = get_joints_with_attributes()
@@ -695,7 +695,7 @@ def rig_converter( target_rig, rig_name ):
     # Move all joints to world
     for joint in get_joints():
         cmds.parent( joint, world = True )
-        cmds.select( deselect = True )
+        cmds.select( clear = True )
 
     # Create T7 joints which don't exist
     for joint_with_attributes in target_rig:
@@ -704,14 +704,14 @@ def rig_converter( target_rig, rig_name ):
             if not joint_with_attributes["parent"] == "head":
                 cmds.joint( name = joint_with_attributes["name"] )
 
-        cmds.select( deselect = True )
+        cmds.select( clear = True )
 
     # Parent target joints
     for joint_with_attributes in target_rig:
         if cmds.objExists( joint_with_attributes["name"] ):
             if "Joints" not in joint_with_attributes["parent"]:
                 cmds.parent( joint_with_attributes["name"], joint_with_attributes["parent"] )
-                cmds.select( deselect = True )
+                cmds.select( clear = True )
 
     # Set translations, rotations for target joints
     for joint_with_attributes in target_rig:
@@ -740,7 +740,7 @@ def rig_converter( target_rig, rig_name ):
                         # Parent them
                         if cmds.objExists( joint_with_attributes["parent"] ):
                             cmds.parent( joint_with_attributes["name"], joint_with_attributes["parent"] )
-                            cmds.select( deselect = True )
+                            cmds.select( clear = True )
 
     # Move eyes back to source positions
     for joint_with_attributes in source_rig:
@@ -751,7 +751,7 @@ def rig_converter( target_rig, rig_name ):
                 cmds.parent( joint_with_attributes["name"], world = True )
                 cmds.move( joint_with_attributes["translateXWorld"], joint_with_attributes["translateYWorld"], joint_with_attributes["translateZWorld"] )
                 cmds.parent( joint_with_attributes["name"], parent )
-                cmds.select( deselect = True )
+                cmds.select( clear = True )
 
     # Array for useless joints that we don't need to keep
     useless = []
@@ -818,7 +818,7 @@ def rig_converter( target_rig, rig_name ):
         set_cosmetic_parent( False )
 
     # Deselect anything that's already selected
-    cmds.select( deselect = True )
+    cmds.select( clear = True )
 
     # Joints we're going to delete, need to be handled differently because these have weights
     joints_to_delete = []
@@ -855,14 +855,14 @@ def rig_converter( target_rig, rig_name ):
 
                         cmds.select( joint_to_delete )
                         mel.eval( "Delete" )
-                        cmds.select( deselect = True )
+                        cmds.select( clear = True )
 
                         if "j_wrist_" in parent:
                             # Unlock all weights
                             lock_all_weights( False )
 
     # Deselect anything that's already selected
-    cmds.select( deselect = True )
+    cmds.select( clear = True )
 
     # Delete leftovers
     for joint_to_delete in joints_to_delete:
@@ -930,7 +930,7 @@ def add_wristtwist_influences():
     # Done
     confirm_dialog( "Added influences" )
 
-    cmds.select( deselect = True )
+    cmds.select( clear = True )
 
 def edit_wristtwist_influences():
     # Make sure the scene isn't empty
@@ -1007,7 +1007,7 @@ def edit_wristtwist_influences():
     # Set tool back to select
     cmds.setToolTo( "selectSuperContext" )
     enable_x_ray( False )
-    cmds.select( deselect = True )
+    cmds.select( clear = True )
 
     # Cleanup
     if operation == "Smooth":
@@ -1027,7 +1027,7 @@ def edit_wristtwist_influences():
             # Don't ask, this never works on the first try (Probably a Maya 2018 bug)
             for index in range( 1, 5 ):
                 merge_verts()
-                cmds.select( deselect = True )
+                cmds.select( clear = True )
 
     confirm_dialog( "Operation completed" )
 
