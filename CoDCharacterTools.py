@@ -531,6 +531,28 @@ def transfer_weight( source, target ):
     enable_x_ray( False )
     cmds.select( clear = True )
 
+def merge_verts( mesh ):
+    if mesh not in get_meshes():
+        error( "This is not a valid mesh!" )
+        return
+
+    # Don't ask, this never works on the first try (Probably a Maya 2018 bug)
+    for index in range( 1, 5 ):
+        cmds.select( clear = True )
+
+        mel.eval( "select " + mesh )
+
+        # Mesh cleanup
+        mel.eval( 'polyCleanupArgList 4 { "0","1","1","0","0","0","0","0","0","1e-05","0","1e-05","0","1e-05","0","-1","0","0" };' )
+
+        # Delete all non-deformer history
+        mel.eval( "BakeAllNonDefHistory" )
+
+        # Merge vertices
+        mel.eval( 'polyMergeVertex  -d 0.01 -am 1 -ch 1 ' + mesh )
+
+        cmds.select( clear = True )
+
 def rig_combiner( show_message = True ):
     # Deselect anything that's already selected
     cmds.select( clear = True )
@@ -1012,22 +1034,8 @@ def edit_wristtwist_influences():
     # Cleanup
     if operation == "Smooth":
         for mesh in get_meshes():
-            mel.eval( "select " + mesh )
-
-            def merge_verts():
-                # Mesh cleanup
-                mel.eval( 'polyCleanupArgList 4 { "0","1","1","0","0","0","0","0","0","1e-05","0","1e-05","0","1e-05","0","-1","0","0" };' )
-
-                # Delete all non-deformer history
-                mel.eval( "BakeAllNonDefHistory" )
-
-                # Merge vertices
-                mel.eval( 'polyMergeVertex  -d 0.01 -am 1 -ch 1 ' + mesh )
-
-            # Don't ask, this never works on the first try (Probably a Maya 2018 bug)
-            for index in range( 1, 5 ):
-                merge_verts()
-                cmds.select( clear = True )
+            # Smoothing can tear the mesh, so let's merge the vertices
+            merge_verts( mesh )
 
     confirm_dialog( "Operation completed" )
 
@@ -1064,6 +1072,16 @@ def menu_transfer_weight():
             error( "Invalid input!" )
             return
 
+def menu_merge_verts():
+    if len( get_meshes() ) < 1:
+        error( "No SEModels could be found!" )
+        return
+
+    for mesh in get_meshes():
+        merge_verts( mesh )
+
+    confirm_dialog( "Operation completed" )
+
 def menu_zero_rotations():
     result = cmds.confirmDialog( title = "Zero rotations", message = "Do you want to zero the rotations of all nodes or only the selected nodes?", button = ["All", "Selected", "Cancel"], defaultButton = "All", cancelButton = "Cancel" )
 
@@ -1090,6 +1108,7 @@ def menu_items():
     # Utilities
     cmds.menuItem( parent = main_menu, divider = True, dividerLabel = "Utilities" )
     cmds.menuItem( parent = main_menu, label = "Transfer weight", command = lambda x: menu_transfer_weight() )
+    cmds.menuItem( parent = main_menu, label = "Merge vertices", command = lambda x: menu_merge_verts() )
     cmds.menuItem( parent = main_menu, label = "Add wristtwists influences", command = lambda x: add_wristtwist_influences() )
     cmds.menuItem( parent = main_menu, label = "Edit all wristtwists weights", command = lambda x: edit_wristtwist_influences() )
     cmds.menuItem( parent = main_menu, label = "Mirror rotations", command = lambda x: menu_mirror_rotations() )
