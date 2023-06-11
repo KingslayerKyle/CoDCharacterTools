@@ -940,7 +940,7 @@ def add_wristtwist_influences():
 
                 if ( "j_wristtwist_" + suffix ) in influences:
                     # Don't add the influence if there's fingers in this skincluster
-                    if ( "j_thumb_" + suffix + "_3" ) in influences or ( "j_index_" + suffix + "_3" ) in influences or ( "j_mid_" + suffix + "_3" ) in influences or ( "j_ring_" + suffix + "_3" ) in influences or ( "j_pinky_" + suffix + "_3" ) in influences:
+                    if ( "j_thumb_" + suffix + "_1" ) in influences or ( "j_index_" + suffix + "_1" ) in influences or ( "j_mid_" + suffix + "_1" ) in influences or ( "j_ring_" + suffix + "_1" ) in influences or ( "j_pinky_" + suffix + "_1" ) in influences:
                         continue
 
                     cmds.skinCluster( get_skincluster_for_mesh( mesh ), edit = True, addInfluence = "j_wristtwist" + str( index ) + "_" + suffix, weightDistribution = 1, smoothWeights = 0.5, smoothWeightsMaxIterations = 2 )
@@ -1007,7 +1007,7 @@ def edit_wristtwist_influences():
     for mesh in get_meshes():
         influences = cmds.skinCluster( get_skincluster_for_mesh( mesh ), query = True, influence = True )
 
-        if "j_index_le_3" in influences or "j_index_ri_3" in influences:
+        if "j_index_le_1" in influences or "j_index_ri_1" in influences:
             continue
 
         for joint in influences:
