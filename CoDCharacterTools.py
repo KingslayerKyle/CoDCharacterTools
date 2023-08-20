@@ -294,6 +294,8 @@ def get_rig_name( semodel ):
         "fb": "[Fullbody]",
         "vh": "[Viewhands]",
         "vl": "[Viewlegs]",
+        "t5": "Black Ops 1",
+        "iw5": "Modern Warfare 3",
         "t6": "Black Ops 2",
         "iw6": "Ghosts",
         "s1": "Advanced Warfare",
@@ -371,8 +373,15 @@ def import_target_rig( file_name ):
 
     return joints_with_attributes
 
+def any_node_exists( nodes ):
+    for node in nodes:
+        if cmds.objExists( node ):
+            return True
+
+    return False
+
 def is_in_a_skincluster( input ):
-    # Checks if a joint or an array of joints is in a skincluster
+    # Checks if a joint or any joint in an array of joints is in a skincluster
     if isinstance( input, list ):
         for joint in input:
             for skinCluster in get_skinclusters():
@@ -552,6 +561,50 @@ def merge_verts( mesh ):
         mel.eval( 'polyMergeVertex  -d 0.01 -am 1 -ch 1 ' + mesh )
 
         cmds.select( clear = True )
+
+def delete_non_target_joints():
+    # Deletes any joint not in the target rig and transfers the weights to the closest parent
+    target_rig = import_target_rig( "fb_t8_male_and_female.mb" )
+    
+    # Joints to delete
+    joints_to_delete = []
+    
+    # Add the joints we want to delete to the array (non-t7-joints)
+    for joint in get_joints():
+        if not is_joint_in_rig( target_rig, joint ):
+            if joint not in joints_to_delete:
+                joints_to_delete.append( joint )
+
+    # Loop them until they're done
+    while any_node_exists( joints_to_delete ):
+        for joint_to_delete in joints_to_delete:
+            if cmds.objExists( joint_to_delete ):
+                if cmds.listRelatives( joint_to_delete, allDescendents = True ) == None:
+                    parent = cmds.listRelatives( joint_to_delete, parent = True )[0]
+
+                    # Lock all weights
+                    lock_all_weights( True )
+
+                    # Make sure parent is also in the skincluster, if not then add it
+                    for mesh in get_meshes():
+                        influences = cmds.skinCluster( get_skincluster_for_mesh( mesh ), query = True, influence = True )
+
+                        for joint in influences:
+                            if joint == joint_to_delete:
+                                if parent not in influences:
+                                    cmds.skinCluster( get_skincluster_for_mesh( mesh ), edit = True, addInfluence = parent, weightDistribution = 1, smoothWeights = 0.5, smoothWeightsMaxIterations = 2 )
+
+                    # Unlock weights for joint and it's parent
+                    set_attribute( parent, "lockInfluenceWeights", False )
+                    set_attribute( joint_to_delete, "lockInfluenceWeights", False )
+
+                    # Delete the joint
+                    mel.eval( "select " + joint_to_delete )
+                    mel.eval( "Delete" )
+                    cmds.select( clear = True )
+
+                    # Unlock all weights
+                    lock_all_weights( False )
 
 def rig_combiner( show_message = True ):
     # Deselect anything that's already selected
@@ -1038,6 +1091,26 @@ def edit_wristtwist_influences():
             merge_verts( mesh )
 
     confirm_dialog( "Operation completed" )
+
+def set_cosmetics():
+    # Marks any joints that aren't in the target rig as cosmetics
+    target_rig = import_target_rig( "fb_t8_male_and_female.mb" )
+
+    cmds.namespace( add = "cosmetic_bone" )
+
+    for joint in get_joints():
+        if not is_joint_in_rig( target_rig, joint ):
+            if cmds.listRelatives( joint, allDescendents = True ) == None:
+                cmds.rename( joint, "cosmetic_bone:" + joint )
+
+def remove_cosmetics_for_mesh( mesh ):
+    if not cmds.objExists( mesh ):
+        print( mesh + " doesn't exist" )
+        return
+    
+    for joint in cmds.skinCluster( get_skincluster_for_mesh( mesh ), query = True, influence = True ):
+        if "cosmetic_bone" in joint:
+            cmds.rename( joint, joint.split( ":" )[-1] )
 
 def menu_mirror_rotations():
     joint_to_mirror = prompt_dialog( "Mirror rotations", "Which joint do you want to mirror rotations from?\n\nThis is useful when making a conversion rig as you will only need to rotate one side\n\nAfter that, you can mirror those rotations to the opposite side\n\nThe rotations for every joint under it will also be mirrored" )
