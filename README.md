@@ -26,7 +26,7 @@ If you create any of your own, use the same naming convention for the files as t
 
 - Import your model, if your model comes in parts then import all of them to the scene
 
-- Using the menu you can choose the "Convert to" option, and select the type of model you're converting
+- Using the menu you can choose the "Convert from" option, and select the type of model you're converting
 
 - After this, you can choose an animation to test your model with. This is much more convenient than launching the game every time you want to test a model (animations not provided)
 
