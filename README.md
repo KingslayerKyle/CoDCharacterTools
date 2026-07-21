@@ -12,7 +12,7 @@ If you create any of your own, use the same naming convention for the files as t
 
 ## Requirements
 - [CoDMayaTools](https://github.com/LunaRyuko/CoDMayaTools/releases)
-- [SETools](https://github.com/dtzxporter/SETools)
+- [Cast](https://github.com/dtzxporter/cast/releases)
 
 ## Installation
 - Place the files from this repository along with the files from the requirements above in `Documents\maya\version\scripts`
@@ -22,7 +22,7 @@ If you create any of your own, use the same naming convention for the files as t
 ## Usage
 - [Click here for example](https://www.youtube.com/watch?v=po5V1ngRqjQ)
 
-- **Only SEModel format is supported**
+- **Only Cast format is supported**
 
 - Import your model, if your model comes in parts then import all of them to the scene
 
@@ -30,7 +30,7 @@ If you create any of your own, use the same naming convention for the files as t
 
 - After this, you can choose an animation to test your model with. This is much more convenient than launching the game every time you want to test a model (animations not provided)
 
-- To add animations to the menu, add the SEAnim files to `Documents\maya\version\scripts\CoDCharacterTools\Animations`
+- To add animations to the menu, add the Cast files to `Documents\maya\version\scripts\CoDCharacterTools\Animations`
 
 - I would recommend adding animations for testing fullbody and some viewmodel reload animations for testing viewhands
 

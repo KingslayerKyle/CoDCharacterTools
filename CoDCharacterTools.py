@@ -19,7 +19,7 @@ import maya.cmds as cmds
 import maya.mel as mel
 import pymel.core as pymel
 import CoDMayaTools
-import SEToolsPlugin
+import castplugin
 
 def error( message ):
     cmds.confirmDialog( title = "An error has occurred", message = message )
@@ -48,9 +48,18 @@ def remove_namespaces():
         namespaces[:] = []
 
 def set_attribute( node, attribute, value ):
+    if value == None:
+        return
+
     if cmds.objExists( node ):
-        if cmds.objExists( node + "." + attribute ):
-            cmds.setAttr( node + "." + attribute, value )
+        if attribute == "castRestPosition":
+            if not cmds.objExists( node + "." + "castRestPosition" ):
+                cmds.addAttr( node, longName = attribute, dataType = "matrix" )
+                
+            cmds.setAttr( node + "." + attribute, value, type = "matrix" )
+        else:
+            if cmds.objExists( node + "." + attribute ):
+                cmds.setAttr( node + "." + attribute, value )
 
 def get_groups():
     groups = []
@@ -71,13 +80,25 @@ def get_joints():
     return cmds.ls( type = "joint" )
 
 def get_meshes():
-    return cmds.ls( "*SEModelMesh*" )
+    return cmds.ls( "*CastMesh*" )
 
 def get_skinclusters():
     return cmds.ls( type = "skinCluster" )
 
 def get_skincluster_for_mesh( mesh ):
     return mel.eval( "findRelatedSkinCluster " + mesh )
+
+def get_blendshapes_for_mesh( mesh ):
+    blendshapes = []
+
+    for blendshape in cmds.ls( type = "blendShape" ):
+        blendshapes.append( blendshape )
+
+    for blendshape_target in cmds.listRelatives( mesh, allDescendents = True, fullPath = True ):
+        if "CastShape" not in blendshape_target:
+            blendshapes.append( blendshape_target )
+
+    return blendshapes
 
 def get_selection():
     return cmds.ls( selection = True )
@@ -92,7 +113,32 @@ def enable_x_ray( enable = True ):
     else:
         mel.eval( 'modelEditor -e -jointXray false modelPanel4' )
 
-def create_joint_attributes( joint ):
+def reset_bind_pose():
+    # Get all skinclusters in the scene
+    skinclusters = cmds.ls( type = "skinCluster" )
+
+    # Make sure they exist
+    if not skinclusters:
+        error( "No skinclusters found in the scene." )
+        return
+
+    # Get all joints influencing this skincluster
+    for skin in skinclusters:
+        joints = cmds.skinCluster( skin, query = True, influence = True )
+
+        if not joints:
+            continue
+
+        # Delete existing bind poses connected to this skincluster
+        bindposes = cmds.listConnections( skin + ".bindPose", type = "dagPose" ) or []
+
+        for bindpose in bindposes:
+            cmds.delete( bindpose )
+
+        # Create a new dagPose node from current pose
+        dag_pose_name = cmds.dagPose( joints, name = skin + "_currentBindPose", save = True, bindPose = True )[0]
+
+def create_joint_attributes( joint, is_target ):
     joint_attributes = {
         "name": joint.split( "|" )[-1].split( ":" )[-1],
         "parent": cmds.listRelatives( joint, parent = True )[0],
@@ -110,8 +156,18 @@ def create_joint_attributes( joint ):
         "translateZWorld": cmds.xform( joint, query = True, worldSpace = True, translation = True )[2],
         "rotateXWorld": cmds.xform( joint, query = True, worldSpace = True, rotation = True )[0],
         "rotateYWorld": cmds.xform( joint, query = True, worldSpace = True, rotation = True )[1],
-        "rotateZWorld": cmds.xform( joint, query = True, worldSpace = True, rotation = True )[2]
+        "rotateZWorld": cmds.xform( joint, query = True, worldSpace = True, rotation = True )[2],
+        "castRestPosition": None
     }
+
+    if is_target:
+        # Don't add eyeballs from target rigs
+        if "j_eyeball_" in joint_attributes["name"]:
+            return None
+
+        # Set cast rest position for target rig
+        if cmds.objExists( joint + ".castRestPosition" ):
+            joint_attributes["castRestPosition"] = cmds.getAttr( joint + ".castRestPosition" )
 
     return joint_attributes
 
@@ -168,8 +224,9 @@ def create_new_rig( namespace, joints_with_attributes ):
             set_attribute( namespace + ":" + joint_with_attributes["name"], "jointOrientY", joint_with_attributes["jointOrientY"] )
             set_attribute( namespace + ":" + joint_with_attributes["name"], "jointOrientZ", joint_with_attributes["jointOrientZ"] )
 
-def get_joints_with_attributes( input = [] ):
+def get_joints_with_attributes( input = [], is_target = False ):
     joints_with_attributes = []
+    joints = []
 
     if len( input ) > 0:
         joints = input
@@ -182,7 +239,11 @@ def get_joints_with_attributes( input = [] ):
 
         if cmds.nodeType( joint_path ) == "joint":
             if "tag_origin" in cmds.listRelatives( joint_path, parent = True, fullPath = True )[0]:
-                joint_attributes = create_joint_attributes( joint_path )
+                joint_attributes = create_joint_attributes( joint_path, is_target )
+
+                # Make sure it didn't return None
+                if joint_attributes == None:
+                    continue
 
                 # Only append this joint if it hasn't been already
                 jointAdded = False
@@ -199,7 +260,11 @@ def get_joints_with_attributes( input = [] ):
         joint_path = cmds.ls( joint, long = True )[0]
 
         if cmds.nodeType( joint_path ) == "joint":
-            joint_attributes = create_joint_attributes( joint_path )
+            joint_attributes = create_joint_attributes( joint_path, is_target )
+
+            # Make sure it didn't return None
+            if joint_attributes == None:
+                continue
 
             # Only append this joint if it hasn't been already
             jointAdded = False
@@ -284,9 +349,9 @@ def get_mirror_joint_attributes( joint_to_mirror ):
 
     return joints_with_attributes
 
-def get_rig_name( semodel ):
-    semodel_name = os.path.splitext( semodel )[0]
-    type = semodel_name.split( "_" )
+def get_rig_name( cast_model ):
+    cast_model_name = os.path.splitext( cast_model )[0]
+    type = cast_model_name.split( "_" )
 
     rig_types = {
         "male": "Male",
@@ -363,7 +428,7 @@ def import_target_rig( file_name ):
                 joints.append( cmds.ls( joint, long = True )[0] )
 
     # Store joints with attributes
-    joints_with_attributes = get_joints_with_attributes( joints )
+    joints_with_attributes = get_joints_with_attributes( joints, True )
 
     # Delete after storing joints with attributes
     for group in get_groups():
@@ -437,7 +502,7 @@ def rotate_models():
                         cmds.move( joint_with_attributes["translateXWorld"], joint_with_attributes["translateYWorld"], joint_with_attributes["translateZWorld"] )
                         cmds.select( clear = True )
 
-def semodel_unique_names():
+def cast_model_unique_names():
     # Deselect anything that's already selected
     cmds.select( clear = True )
 
@@ -446,7 +511,7 @@ def semodel_unique_names():
     for mesh in get_meshes():
         num += 1
 
-        cmds.rename( mesh, "SEModelMesh_" + str( num ) )
+        cmds.rename( mesh, "CastMesh_" + str( num ) )
 
 def set_cosmetic_parent( show_message = True ):
     if not cmds.objExists( "head" ):
@@ -492,7 +557,7 @@ def transfer_weight( source, target ):
     cmds.select( clear = True )
 
     # Make sure no animation is in the scene
-    if len( cmds.ls( "*SENotes*" ) ) > 0:
+    if len( cmds.ls( "*CastNotetracks*" ) ) > 0:
         error( "You have an animation in the scene,\n\nReset scene first." )
         return
 
@@ -511,10 +576,17 @@ def transfer_weight( source, target ):
     if cmds.currentCtx() != "artAttrSkinContext":
         mel.eval( "ArtPaintSkinWeightsTool" )
 
+    # Remove unused influences
+    for mesh in get_meshes():
+        # Remove unused influences
+        cmds.skinCluster( get_skincluster_for_mesh( mesh ), edit = True, removeUnusedInfluence = True )
+
     # Transfer weight
     for mesh in get_meshes():
+        # Query influences
         influences = cmds.skinCluster( get_skincluster_for_mesh( mesh ), query = True, influence = True )
 
+        # Skip if source isn't in this skincluster
         if source not in influences:
             continue
 
@@ -529,6 +601,10 @@ def transfer_weight( source, target ):
             # Unlock all weights
             lock_all_weights( False )
 
+        # Deselect anything that's already selected
+        cmds.select( clear = True )
+
+        # Move the weights
         mel.eval( "changeSelectMode -object; select " + mesh )
         mel.eval( "artSkinSelectInfluence artAttrSkinPaintCtx " + source )
         mel.eval( "skinCluster -edit -selectInfluenceVerts " + source + " " + get_skincluster_for_mesh( mesh ) )
@@ -562,9 +638,20 @@ def merge_verts( mesh ):
 
         cmds.select( clear = True )
 
-def delete_non_target_joints():
+def delete_non_target_joints_preserve_all_weights( rig_name ):
     # Deletes any joint not in the target rig and transfers the weights to the closest parent
-    target_rig = import_target_rig( "fb_t8_male_and_female.mb" )
+    target_rig = None
+
+    # Set target rig type
+    if "Viewhands" in rig_name:
+        target_rig = import_target_rig( "vh_t8.mb" )
+    elif "Fullbody" in rig_name:
+        target_rig = import_target_rig( "fb_t8_male_and_female.mb" )
+
+    # Rig not recognised
+    if target_rig == None:
+        error( "Rig not recognised" )
+        return
     
     # Joints to delete
     joints_to_delete = []
@@ -606,14 +693,86 @@ def delete_non_target_joints():
                     # Unlock all weights
                     lock_all_weights( False )
 
+def delete_non_target_joints_preserve_hand_weights( rig_name ):
+    # Deletes any joint not in the target rig and transfers the weights to the closest parent
+    target_rig = None
+
+    # Set target rig type
+    if "Viewhands" in rig_name:
+        target_rig = import_target_rig( "vh_t8.mb" )
+    elif "Fullbody" in rig_name:
+        target_rig = import_target_rig( "fb_t8_male_and_female.mb" )
+
+    # Rig not recognised
+    if target_rig == None:
+        error( "Rig not recognised" )
+        return
+
+    # Joints to delete
+    joints_to_delete = []
+
+    # Add joints that we need to get rid of that are still in a skincluster to array
+    if cmds.objExists( "j_wrist_le" ) and cmds.objExists( "j_wrist_ri" ):
+        for joint in get_joints():
+            if cmds.objExists( joint ):
+                if not is_joint_in_rig( target_rig, joint ):
+                    if joint not in joints_to_delete:
+                        # For viewhands, get rid of everything that isn't a t7 joint
+                        if "Viewhands" in rig_name:
+                            joints_to_delete.append( joint )
+                        # For fullbody get rid of anything under wrist, as some tags are used on the body for accessories and if we transfer those weights it might offset them
+                        elif "Fullbody" in rig_name:
+                            if joint in cmds.listRelatives( "j_wrist_le", allDescendents = True ) or joint in cmds.listRelatives( "j_wrist_ri", allDescendents = True ):
+                                joints_to_delete.append( joint )
+
+    # Delete them
+    if len( joints_to_delete ) > 0:
+        # Keep doing this until none of them are influences
+        while is_in_a_skincluster( joints_to_delete ):
+            for joint_to_delete in joints_to_delete:
+                if cmds.objExists( joint_to_delete ):
+                    if cmds.listRelatives( joint_to_delete, allDescendents = True ) == None:
+                        parent = cmds.listRelatives( joint_to_delete, parent = True )[0]
+
+                        if "j_wrist_" in parent:
+                            # Lock all weights
+                            lock_all_weights( True )
+
+                            set_attribute( joint_to_delete, "lockInfluenceWeights", 0 )
+                            set_attribute( parent, "lockInfluenceWeights", 0 )
+
+                        cmds.select( joint_to_delete )
+                        mel.eval( "Delete" )
+                        cmds.select( clear = True )
+
+                        if "j_wrist_" in parent:
+                            # Unlock all weights
+                            lock_all_weights( False )
+
+    # Delete leftovers
+    for joint_to_delete in joints_to_delete:
+        if cmds.objExists( joint_to_delete ):
+            cmds.delete( joint_to_delete )
+
+    # Deselect anything that's already selected
+    cmds.select( clear = True )
+
 def rig_combiner( show_message = True ):
     # Deselect anything that's already selected
     cmds.select( clear = True )
 
     # Make sure the scene isn't empty
     if len( get_joints() + get_meshes() ) < 1:
-        error( "No SEModels could be found!" )
+        error( "No Cast models could be found!" )
         return
+
+    # If there's any blendshapes, delete them
+    for mesh in get_meshes():
+        blendshapes = get_blendshapes_for_mesh( mesh )
+
+        if len( blendshapes ) > 0:
+            for blendshape in blendshapes:
+                cmds.delete( blendshape )
 
     # Remove existing namespaces first
     remove_namespaces()
@@ -624,8 +783,8 @@ def rig_combiner( show_message = True ):
     # Store joints attributes
     joints_with_attributes = get_joints_with_attributes()
 
-    # Give the semodels unique names so we don't clash
-    semodel_unique_names()
+    # Give the cast models unique names so we don't clash
+    cast_model_unique_names()
 
     # Rotate models to correct positions
     rotate_models()
@@ -692,8 +851,8 @@ def rig_combiner( show_message = True ):
 
     # Done
     if show_message:
-        print( "Combined SEModels." )
-        confirm_dialog( "Combined SEModels." )
+        print( "Combined Cast models." )
+        confirm_dialog( "Combined Cast models." )
 
 def rig_converter( target_rig, rig_name ):
     # Deselect anything that's already selected
@@ -701,8 +860,16 @@ def rig_converter( target_rig, rig_name ):
 
     # Make sure the scene isn't empty
     if len( get_joints() + get_meshes() ) < 1:
-        error( "No SEModels could be found!" )
+        error( "No Cast models could be found!" )
         return
+
+    # If there's any blendshapes, delete them
+    for mesh in get_meshes():
+        blendshapes = get_blendshapes_for_mesh( mesh )
+
+        if len( blendshapes ) > 0:
+            for blendshape in blendshapes:
+                cmds.delete( blendshape )
 
     # Set skincluster attributes
     set_skincluster_attributes()
@@ -720,7 +887,9 @@ def rig_converter( target_rig, rig_name ):
         "j_metaring_le_1": "j_ringbase_le",
         "j_metaring_ri_1": "j_ringbase_ri",
         "j_metapinky_le_1": "j_pinkybase_le",
-        "j_metapinky_ri_1": "j_pinkybase_ri"
+        "j_metapinky_ri_1": "j_pinkybase_ri",
+        "jnt_eyeball_l": "j_eyeball_le",
+        "jnt_eyeball_r": "j_eyeball_ri"
     }
 
     # Rename joints
@@ -800,6 +969,7 @@ def rig_converter( target_rig, rig_name ):
             set_attribute( joint_with_attributes["name"], "jointOrientX", joint_with_attributes["jointOrientX"] )
             set_attribute( joint_with_attributes["name"], "jointOrientY", joint_with_attributes["jointOrientY"] )
             set_attribute( joint_with_attributes["name"], "jointOrientZ", joint_with_attributes["jointOrientZ"] )
+            set_attribute( joint_with_attributes["name"], "castRestPosition", joint_with_attributes["castRestPosition"] )
 
     # Parent source joints
     for joint_with_attributes in source_rig:
@@ -817,16 +987,33 @@ def rig_converter( target_rig, rig_name ):
                             cmds.parent( joint_with_attributes["name"], joint_with_attributes["parent"] )
                             cmds.select( clear = True )
 
-    # Move eyes back to source positions
-    for joint_with_attributes in source_rig:
-        if "j_eyeball" in joint_with_attributes["name"]:
-            if not cmds.listRelatives( joint_with_attributes["name"], parent = True ) == None:
-                parent = cmds.listRelatives( joint_with_attributes["name"], parent = True )[0]
+    # Fix leftover weights on viewhands
+    if "Viewhands" in rig_name:
+        question = (
+            "Please choose how to handle leftover joint weights:\n\n"
+            "Preserve Hand Weights: Removes non-target joints while preserving hand and wrist weighting.\n\n"
+            "Preserve All Weights: Removes non-target joints and redistributes all remaining weights to parent joints.\n\n"
+            "Notes:\n\n"
+            "The target rig is the BO3 rig.\n\n"
+            "You may experiment with either method to determine which produces the best results for your model.\n\n"
+            "After converting the model, use the Import Animation menu to verify its behavior with animations.\n\n"
+            "Important: BO3, BO4, and BOCW rigs use linear skinning for viewmodel arms and already include the necessary twist joints.\n\n"
+            "Older COD games also use linear skinning but do not include twist joints, relying on simpler animations and careful weight painting to avoid deformation.\n\n"
+            "Newer COD games use dual quaternion skinning, which does not require twist joints because the skinning method preserves volume and prevents twisting artifacts automatically.\n\n"
+            "When re-targeting models from games that lack twist joints to the BO3 rig, twist joints must be manually added and weight-painted, as they are not included by default.\n\n"
+            "Failure to do so may result in deformations-such as extremely thin arms-during animation playback (e.g., reloads).\n\n"
+            "While helper functions like \"Add wrist twist influences\" and \"Edit wrist twist influences\" are provided in the menu, perfect results cannot be guaranteed due to variations between individual models."
+        )
 
-                cmds.parent( joint_with_attributes["name"], world = True )
-                cmds.move( joint_with_attributes["translateXWorld"], joint_with_attributes["translateYWorld"], joint_with_attributes["translateZWorld"] )
-                cmds.parent( joint_with_attributes["name"], parent )
-                cmds.select( clear = True )
+        result = cmds.confirmDialog( title = "Delete Non-Target Joints", message = question, button = ["Preserve Hand Weights", "Preserve All Weights"], defaultButton = "Preserve Hand Weights" )
+
+        if result == "Preserve Hand Weights":
+            delete_non_target_joints_preserve_hand_weights( rig_name )
+        elif result == "Preserve All Weights":
+            delete_non_target_joints_preserve_all_weights( rig_name )
+        else:
+            error( "Something went wrong with converting viewhands." )
+            return
 
     # Array for useless joints that we don't need to keep
     useless = []
@@ -848,159 +1035,162 @@ def rig_converter( target_rig, rig_name ):
     # Move joints mode
     enable_move_joints( False )
 
-    # Zero all rotations
-    set_zero_rotations( get_joints() )
+    # Reset scene
+    castplugin.utilityClearAnimation()
 
     # Put them back in group
     if "Viewhands" in rig_name:
-        set_attribute( "tag_view", "translateX", 0 )
-        set_attribute( "tag_view", "translateY", 0 )
-        set_attribute( "tag_view", "translateZ", 0 )
+        set_attribute( "tag_view", "translateX", 0.0 )
+        set_attribute( "tag_view", "translateY", 0.0 )
+        set_attribute( "tag_view", "translateZ", 0.0 )
 
-        set_attribute( "tag_ads", "translateX", 0 )
-        set_attribute( "tag_ads", "translateY", 0 )
-        set_attribute( "tag_ads", "translateZ", 0 )
+        set_attribute( "tag_ads", "translateX", 0.0 )
+        set_attribute( "tag_ads", "translateY", 0.0 )
+        set_attribute( "tag_ads", "translateZ", 0.0 )
 
-        set_attribute( "tag_torso", "translateX", 0 )
-        set_attribute( "tag_torso", "translateY", 0 )
-        set_attribute( "tag_torso", "translateZ", 0 )
+        set_attribute( "tag_torso", "translateX", 0.0 )
+        set_attribute( "tag_torso", "translateY", 0.0 )
+        set_attribute( "tag_torso", "translateZ", 0.0 )
 
-        set_attribute( "j_shoulder_le", "translateX", -2.652 )
-        set_attribute( "j_shoulder_le", "translateY", 20.266 )
-        set_attribute( "j_shoulder_le", "translateZ", -10.853 )
+        set_attribute( "j_shoulder_le", "translateX", -2.65154147148 )
+        set_attribute( "j_shoulder_le", "translateY", 20.2655353546 )
+        set_attribute( "j_shoulder_le", "translateZ", -10.8532037735 )
 
-        set_attribute( "j_shoulder_ri", "translateX", -2.652 )
-        set_attribute( "j_shoulder_ri", "translateY", -20.266 )
-        set_attribute( "j_shoulder_ri", "translateZ", -10.853 )
+        set_attribute( "j_shoulder_ri", "translateX", -2.65154147148 )
+        set_attribute( "j_shoulder_ri", "translateY", -20.2655353546 )
+        set_attribute( "j_shoulder_ri", "translateZ", -10.8532037735 )
 
-        set_attribute( "tag_weapon_left", "translateX", 35.329 )
-        set_attribute( "tag_weapon_left", "translateY", 45.914 )
-        set_attribute( "tag_weapon_left", "translateZ", -44.023 )
-        set_attribute( "tag_weapon_left", "jointOrientX", 41.248 )
-        set_attribute( "tag_weapon_left", "jointOrientY", 23.941 )
-        set_attribute( "tag_weapon_left", "jointOrientZ", 20.443 )
+        set_attribute( "tag_weapon_left", "translateX", 35.3286743164 )
+        set_attribute( "tag_weapon_left", "translateY", 45.913860321 )
+        set_attribute( "tag_weapon_left", "translateZ", -44.0232429504 )
+        set_attribute( "tag_weapon_left", "rotateX", 41.2484810387 )
+        set_attribute( "tag_weapon_left", "rotateY", 23.9407359736 )
+        set_attribute( "tag_weapon_left", "rotateZ", 20.4425301212 )
 
-        set_attribute( "tag_weapon_right", "translateX", 35.240 )
-        set_attribute( "tag_weapon_right", "translateY", -45.670 )
-        set_attribute( "tag_weapon_right", "translateZ", -44.124 )
-        set_attribute( "tag_weapon_right", "jointOrientX", -41.887 )
-        set_attribute( "tag_weapon_right", "jointOrientY", 24.888 )
-        set_attribute( "tag_weapon_right", "jointOrientZ", -21.812 )
+        set_attribute( "tag_weapon_right", "translateX", 35.239654541 )
+        set_attribute( "tag_weapon_right", "translateY", -45.6697502136 )
+        set_attribute( "tag_weapon_right", "translateZ", -44.1238937378 )
+        set_attribute( "tag_weapon_right", "rotateX", -41.8867336396 )
+        set_attribute( "tag_weapon_right", "rotateY", 24.887949571 )
+        set_attribute( "tag_weapon_right", "rotateZ", -21.8123152033 )
 
+        # Reset bind pose
+        reset_bind_pose()
+
+        # Group joints
         cmds.parent( "tag_view", "Joints" )
     elif "Fullbody" in rig_name:
-        cmds.parent( "tag_origin", "Joints" )
+        # Move j_mainroot back
+        set_attribute( "j_mainroot", "translateX", -3.18260717392 )
+        set_attribute( "j_mainroot", "translateY", 0.000215000065509 )
+        set_attribute( "j_mainroot", "translateZ", 94.5591583252 )
+
+        # Set correct eyeball rotations for BO1/AW
+        if ("Black Ops 1" in rig_name) or ("Advanced Warfare" in rig_name):
+            enable_move_joints( True )
+            set_attribute( "j_eyeball_le", "rotateX", 172.427775929 )
+            set_attribute( "j_eyeball_le", "rotateY", -90.0 )
+            set_attribute( "j_eyeball_le", "rotateZ", 0.0 )
+            set_attribute( "j_eyeball_ri", "rotateX", 172.427775929 )
+            set_attribute( "j_eyeball_ri", "rotateY", -90.0 )
+            set_attribute( "j_eyeball_ri", "rotateZ", 0.0 )
+            enable_move_joints( False )
+
+        # Remove joints inside head for BO1
+        if "Black Ops 1" in rig_name:
+            # Lock all weights
+            lock_all_weights( True )
+
+            # Add head influence to meshes that don't have it, that do have "j_jaw" or "j_tongue"
+            for mesh in get_meshes():
+                # Get influences
+                influences = cmds.skinCluster( get_skincluster_for_mesh( mesh ), query = True, influence = True )
+
+                # Remove tag_origin from influences if it's in there, so it doesn't interfere
+                if "tag_origin" in influences:
+                    cmds.skinCluster( get_skincluster_for_mesh( mesh ), edit = True, removeInfluence = "tag_origin" )
+
+                # Skip if it's already in there
+                if "head" in influences:
+                    continue
+
+                # Add head influence
+                if ("j_jaw" not in influences) or ("j_tongue" not in influences):
+                    cmds.skinCluster( get_skincluster_for_mesh( mesh ), edit = True, addInfluence = "head", weightDistribution = 1, smoothWeights = 0.5, smoothWeightsMaxIterations = 2 )
+
+            # Unlock head joint
+            set_attribute( "head", "lockInfluenceWeights", False )
+
+            # Loop joints inside head and delete them
+            for joint in cmds.listRelatives( "head", allDescendents = True ):
+                # Skip these ones
+                if "j_helmet" in joint or "tag_eye" in joint or "j_eyeball_le" in joint or "j_eyeball_ri" in joint:
+                    continue
+
+                # Unlock joint
+                set_attribute( joint, "lockInfluenceWeights", False )
+
+                # Delete the joint
+                mel.eval( "select " + joint )
+                mel.eval( "Delete" )
+                cmds.select( clear = True )
+
+            # Unlock all weights
+            lock_all_weights( False )
+
+        # Set cosmetic parent
         set_cosmetic_parent( False )
 
-    # Deselect anything that's already selected
-    cmds.select( clear = True )
+        # Fix leftover weights
+        delete_non_target_joints_preserve_hand_weights( rig_name )
 
-    # Joints we're going to delete, need to be handled differently because these have weights
-    joints_to_delete = []
+        # Group joints
+        cmds.parent( "tag_origin", "Joints" )
 
-    # Add joints that we need to get rid of that are still in a skincluster to array
-    if cmds.objExists( "j_wrist_le" ) and cmds.objExists( "j_wrist_ri" ):
-        for joint in get_joints():
-            if cmds.objExists( joint ):
-                if not is_joint_in_rig( target_rig, joint ):
-                    if joint not in joints_to_delete:
-                        # For viewhands, get rid of everything that isn't a t7 joint
-                        if "Viewhands" in rig_name:
-                            joints_to_delete.append( joint )
-                        # For fullbody get rid of anything under wrist, as some tags are used on the body for accessories and if we transfer those weights it might offset them
-                        elif "Fullbody" in rig_name:
-                            if joint in cmds.listRelatives( "j_wrist_le", allDescendents = True ) or joint in cmds.listRelatives( "j_wrist_ri", allDescendents = True ):
-                                joints_to_delete.append( joint )
-
-    # Delete them
-    if len( joints_to_delete ) > 0:
-        # Keep doing this until none of them are influences
-        while is_in_a_skincluster( joints_to_delete ):
-            for joint_to_delete in joints_to_delete:
-                if cmds.objExists( joint_to_delete ):
-                    if cmds.listRelatives( joint_to_delete, allDescendents = True ) == None:
-                        parent = cmds.listRelatives( joint_to_delete, parent = True )[0]
-
-                        if "j_wrist_" in parent:
-                            # Lock all weights
-                            lock_all_weights( True )
-
-                            set_attribute( joint_to_delete, "lockInfluenceWeights", 0 )
-                            set_attribute( parent, "lockInfluenceWeights", 0 )
-
-                        cmds.select( joint_to_delete )
-                        mel.eval( "Delete" )
-                        cmds.select( clear = True )
-
-                        if "j_wrist_" in parent:
-                            # Unlock all weights
-                            lock_all_weights( False )
+    # Set vertex colors
+    #set_vertex_colors()
 
     # Deselect anything that's already selected
     cmds.select( clear = True )
-
-    # Delete leftovers
-    for joint_to_delete in joints_to_delete:
-        if cmds.objExists( joint_to_delete ):
-            cmds.delete( joint_to_delete )
 
     # Done
     print( "Converted." )
     confirm_dialog( "Converted." )
 
-def add_wristtwist_influences():
-    # Make sure the scene isn't empty
-    if len( get_joints() + get_meshes() ) < 1:
-        error( "No SEModels could be found!" )
+def add_wristtwist_influences( suffix ):
+    # Make sure something is selected
+    if len( get_selection() ) < 1:
+        error( "Nothing selected!" )
         return
+
+    # Make sure the selection is a valid mesh
+    for selection in get_selection():
+        if selection not in get_meshes():
+            error( "This is not a valid mesh!" )
+            return
     
     # Make sure no animation is in the scene
-    if len( cmds.ls( "*SENotes*" ) ) > 0:
+    if len( cmds.ls( "*CastNotetracks*" ) ) > 0:
         error( "You have an animation in the scene,\n\nReset scene first." )
         return
 
-    suffixes = ["le", "ri"]
-
     # Make sure wristtwists exist
-    for suffix in suffixes:
-        for index in range( 1, 7 ):
-            if not cmds.objExists( "j_wristtwist" + str( index ) + "_" + suffix ):
-                error( "Can't find wristtwists\n\nDid you forget to convert first?\n\nOperation cancelled..." )
-                return
-
-            # Make sure they're not already attached
-            if is_in_a_skincluster( "j_wristtwist" + str( index ) + "_" + suffix ):
-                error( "The wristtwists are already attached to a skincluster!\n\nOperation cancelled..." )
-                return
+    for index in range( 1, 7 ):
+        if not cmds.objExists( "j_wristtwist" + str( index ) + "_" + suffix ):
+            error( "Can't find wristtwists\n\nDid you forget to convert first?\n\nOperation cancelled..." )
+            return
 
     # Set skincluster attributes
     set_skincluster_attributes()
 
-    # Lock weights for joints that we don't want to be affected by these new influences
-    for joint in get_joints():
-        if "shoulder" not in joint:
-            if "elbow" not in joint:
-                if "wristtwist" not in joint:
-                    if "wrist" not in joint:
-                        set_attribute( joint, "lockInfluenceWeights", 1 )
-
     # Add influences for the wristtwists
-    for suffix in suffixes:
-        for mesh in get_meshes():
+    for selection in get_selection():
+        if selection in get_meshes():
             for index in range( 1, 7 ):
-                # Make sure skincluster is suitable for this operation
-                influences = cmds.skinCluster( get_skincluster_for_mesh( mesh ), query = True, influence = True )
+                cmds.skinCluster( get_skincluster_for_mesh( selection ), edit = True, addInfluence = "j_wristtwist" + str( index ) + "_" + suffix, weightDistribution = 1, smoothWeights = 0.5, smoothWeightsMaxIterations = 2 )
 
-                if ( "j_wristtwist_" + suffix ) in influences:
-                    # Don't add the influence if there's fingers in this skincluster
-                    if ( "j_thumb_" + suffix + "_1" ) in influences or ( "j_index_" + suffix + "_1" ) in influences or ( "j_mid_" + suffix + "_1" ) in influences or ( "j_ring_" + suffix + "_1" ) in influences or ( "j_pinky_" + suffix + "_1" ) in influences:
-                        continue
-
-                    cmds.skinCluster( get_skincluster_for_mesh( mesh ), edit = True, addInfluence = "j_wristtwist" + str( index ) + "_" + suffix, weightDistribution = 1, smoothWeights = 0.5, smoothWeightsMaxIterations = 2 )
-
-    # Unlock all weights
-    for joint in get_joints():
-        set_attribute( joint, "lockInfluenceWeights", 0 )
+    # Reset bind pose
+    reset_bind_pose()
 
     # Done
     confirm_dialog( "Added influences" )
@@ -1010,16 +1200,16 @@ def add_wristtwist_influences():
 def edit_wristtwist_influences():
     # Make sure the scene isn't empty
     if len( get_joints() + get_meshes() ) < 1:
-        error( "No SEModels could be found!" )
+        error( "No Cast models could be found!" )
         return
     
     # Make sure no animation is in the scene
-    if len( cmds.ls( "*SENotes*" ) ) > 0:
+    if len( cmds.ls( "*CastNotetracks*" ) ) > 0:
         error( "You have an animation in the scene,\n\nReset scene first." )
         return
 
     # Get user input
-    operation = cmds.promptDialog( title = "Select operation", message = "Do you want to scale or smooth the weights?\n\nEnter the paint value (Default is 1.0)\n\nMake sure you test with animations to see if it looks good", button = ["Scale", "Smooth", "Cancel"], cancelButton = "Cancel" )
+    operation = cmds.promptDialog( title = "Select operation", message = "Do you want to scale or smooth the weights?\n\nEnter the paint value (Default is 1.0)\n\nMake sure you test with animations to see if it looks good\n\nNote: Only selected meshes will be processed.", button = ["Scale", "Smooth", "Cancel"], cancelButton = "Cancel" )
     value = cmds.promptDialog( query = True, text = True )
 
     # Cancel
@@ -1057,21 +1247,21 @@ def edit_wristtwist_influences():
     cmds.artAttrSkinPaintCtx( cmds.currentCtx(), edit = 1, selectedattroper = operation.lower(), value = float( value ), maxvalue = float( value ) )
 
     # Perform operation
-    for mesh in get_meshes():
-        influences = cmds.skinCluster( get_skincluster_for_mesh( mesh ), query = True, influence = True )
-
-        if "j_index_le_1" in influences or "j_index_ri_1" in influences:
+    for selection in get_selection():
+        if selection not in get_meshes():
             continue
+
+        influences = cmds.skinCluster( get_skincluster_for_mesh( selection ), query = True, influence = True )
 
         for joint in influences:
             if "j_wristtwist" in joint:
-                mel.eval( "changeSelectMode -object; select " + mesh )
+                mel.eval( "changeSelectMode -object; select " + selection )
                 mel.eval( "artSkinSelectInfluence artAttrSkinPaintCtx " + joint )
                 cmds.artAttrSkinPaintCtx( cmds.currentCtx(), edit = 1, clear = 1 )
 
         for joint in influences:
             if "j_shoulder" in joint:
-                mel.eval( "changeSelectMode -object; select " + mesh )
+                mel.eval( "changeSelectMode -object; select " + selection )
                 mel.eval( "artSkinSelectInfluence artAttrSkinPaintCtx " + joint )
                 cmds.artAttrSkinPaintCtx( cmds.currentCtx(), edit = 1, clear = 1 )
 
@@ -1086,13 +1276,16 @@ def edit_wristtwist_influences():
 
     # Cleanup
     if operation == "Smooth":
-        for mesh in get_meshes():
+        for selection in get_selection():
+            if selection not in get_meshes():
+                continue
+
             # Smoothing can tear the mesh, so let's merge the vertices
-            merge_verts( mesh )
+            merge_verts( selection )
 
     confirm_dialog( "Operation completed" )
 
-def set_cosmetics():
+def set_non_target_joints_as_cosmetics():
     # Marks any joints that aren't in the target rig as cosmetics
     target_rig = import_target_rig( "fb_t8_male_and_female.mb" )
 
@@ -1103,14 +1296,26 @@ def set_cosmetics():
             if cmds.listRelatives( joint, allDescendents = True ) == None:
                 cmds.rename( joint, "cosmetic_bone:" + joint )
 
-def remove_cosmetics_for_mesh( mesh ):
+def remove_cosmetics_from_mesh( mesh ):
     if not cmds.objExists( mesh ):
-        print( mesh + " doesn't exist" )
+        error( mesh + " doesn't exist" )
         return
     
     for joint in cmds.skinCluster( get_skincluster_for_mesh( mesh ), query = True, influence = True ):
         if "cosmetic_bone" in joint:
             cmds.rename( joint, joint.split( ":" )[-1] )
+
+def pin_ik_handle():
+    selection = get_selection()
+
+    if selection:
+        ik = selection[0]
+        loc = cmds.spaceLocator( name = "wrist_pin_loc" )[0]
+        cmds.delete( cmds.parentConstraint( ik, loc ) )
+        cmds.pointConstraint( loc, ik, mo = False )
+        error( "Wrist pinned successfully." )
+    else:
+        error( "Select the IK handle first." )
 
 def menu_mirror_rotations():
     joint_to_mirror = prompt_dialog( "Mirror rotations", "Which joint do you want to mirror rotations from?\n\nThis is useful when making a conversion rig as you will only need to rotate one side\n\nAfter that, you can mirror those rotations to the opposite side\n\nThe rotations for every joint under it will also be mirrored" )
@@ -1130,7 +1335,14 @@ def menu_new_target_rig( name ):
     cmds.menuItem( label = get_rig_name( name ), command = lambda x: rig_converter( import_target_rig( name ), get_rig_name( name ) ) )
 
 def menu_new_test_animation( name ):
-    cmds.menuItem( label = name, command = lambda x: SEToolsPlugin.__load_seanim__( get_animations_dir() + name ) )
+    cmds.menuItem( label = os.path.splitext( name )[0], command = lambda x: menu_import_test_animation( name ) )
+
+def menu_import_test_animation( name ):
+    # Import, reset scene and import again
+    # Due to an issue in the cast plugin
+    cmds.file( str( get_animations_dir() + name ), i = True, itr = "override" )
+    castplugin.utilityClearAnimation()
+    cmds.file( str( get_animations_dir() + name ), i = True, itr = "override" )
 
 def menu_transfer_weight():    
     weights = prompt_dialog( "Transfer weight", "Input your source joint, followed by your target joint\n\nSeparated by a hyphen (-)\n\nExample below:\n\nj_midbase_le-j_wrist_le" )
@@ -1145,9 +1357,13 @@ def menu_transfer_weight():
             error( "Invalid input!" )
             return
 
-def menu_merge_verts():
+def menu_transfer_weight_prompt( source, target ):
+    transfer_weight( source, target )
+    confirm_dialog( "Transferred: " + source + " > " + target + "\n\nDone." )
+
+def menu_merge_verts_all():
     if len( get_meshes() ) < 1:
-        error( "No SEModels could be found!" )
+        error( "No Cast models could be found!" )
         return
 
     for mesh in get_meshes():
@@ -1155,8 +1371,27 @@ def menu_merge_verts():
 
     confirm_dialog( "Operation completed" )
 
+def menu_merge_verts_selected():
+    if len( get_meshes() ) < 1:
+        error( "No Cast models could be found!" )
+        return
+    
+    if len( get_selection() ) > 1:
+        error( "Select one mesh!" )
+        return
+    
+    mesh = get_selection()[0]
+
+    if mesh not in get_meshes():
+        error( "This is not a valid mesh!" )
+        return
+    
+    merge_verts( mesh )
+
+    confirm_dialog( "Operation completed" )
+
 def menu_zero_rotations():
-    result = cmds.confirmDialog( title = "Zero rotations", message = "Do you want to zero the rotations of all nodes or only the selected nodes?", button = ["All", "Selected", "Cancel"], defaultButton = "All", cancelButton = "Cancel" )
+    result = cmds.confirmDialog( title = "Zero rotations", message = "Do you want to zero the rotations of all joints or only the selected ones?", button = ["All", "Selected", "Cancel"], defaultButton = "All", cancelButton = "Cancel" )
 
     if result == "All":
         set_zero_rotations( get_joints() )
@@ -1173,27 +1408,38 @@ def menu_items():
     # Create the menu
     main_menu = cmds.menu( "CoDCharacterTools", label = "CoDCharacterTools", tearOff = True )
 
-    # Misc
-    cmds.menuItem( parent = main_menu, divider = True, dividerLabel = "Miscellaneous" )
+    # General
+    cmds.menuItem( parent = main_menu, divider = True, dividerLabel = "General" )
     cmds.menuItem( parent = main_menu, label = "Reload plugin", command = "reload(CoDCharacterTools)" )
     cmds.menuItem( parent = main_menu, label = "Remove all namespaces", command = lambda x: remove_namespaces() )
+    cmds.menuItem( parent = main_menu, label = "Weld detached vertices (All meshes)", command = lambda x: menu_merge_verts_all() )
+    cmds.menuItem( parent = main_menu, label = "Weld detached vertices (Selected mesh)", command = lambda x: menu_merge_verts_selected() )
+    cmds.menuItem( parent = main_menu, label = "Mirror joint rotations", command = lambda x: menu_mirror_rotations() )
+    cmds.menuItem( parent = main_menu, label = "Zero joint rotations", command = lambda x: menu_zero_rotations() )
 
-    # Utilities
-    cmds.menuItem( parent = main_menu, divider = True, dividerLabel = "Utilities" )
-    cmds.menuItem( parent = main_menu, label = "Transfer weight", command = lambda x: menu_transfer_weight() )
-    cmds.menuItem( parent = main_menu, label = "Merge vertices", command = lambda x: menu_merge_verts() )
-    cmds.menuItem( parent = main_menu, label = "Add wristtwists influences", command = lambda x: add_wristtwist_influences() )
-    cmds.menuItem( parent = main_menu, label = "Edit all wristtwists weights", command = lambda x: edit_wristtwist_influences() )
-    cmds.menuItem( parent = main_menu, label = "Mirror rotations", command = lambda x: menu_mirror_rotations() )
-    cmds.menuItem( parent = main_menu, label = "Zero rotations", command = lambda x: menu_zero_rotations() )
+    # Rigging
+    cmds.menuItem( parent = main_menu, divider = True, dividerLabel = "Rigging" )
+    cmds.menuItem( parent = main_menu, label = "Transfer weight (user input)", command = lambda x: menu_transfer_weight() )
+    cmds.menuItem( parent = main_menu, label = "Transfer weight (presets)", subMenu = True )
+    cmds.menuItem( divider = True, dividerLabel = "Fullbody" )
+    cmds.menuItem( label = "j_shouldertwist_le>j_shoulder_le", command = lambda x: menu_transfer_weight_prompt( "j_shouldertwist_le", "j_shoulder_le" ) )
+    cmds.menuItem( label = "j_shouldertwist_ri>j_shoulder_ri", command = lambda x: menu_transfer_weight_prompt( "j_shouldertwist_ri", "j_shoulder_ri" ) )
+    cmds.menuItem( divider = True, dividerLabel = "Viewlegs" )
+    cmds.menuItem( label = "j_spine4>j_mainroot", command = lambda x: menu_transfer_weight_prompt( "j_spine4", "j_mainroot" ) )
+    cmds.menuItem( label = "j_spineupper>j_mainroot", command = lambda x: menu_transfer_weight_prompt( "j_spineupper", "j_mainroot" ) )
+    cmds.menuItem( label = "j_spinelower>j_mainroot", command = lambda x: menu_transfer_weight_prompt( "j_spinelower", "j_mainroot" ) )
+    cmds.menuItem( parent = main_menu, label = "Add left wrist twist influences to selected mesh", command = lambda x: add_wristtwist_influences( "le" ) )
+    cmds.menuItem( parent = main_menu, label = "Add right wrist twist influences to selected mesh", command = lambda x: add_wristtwist_influences( "ri" ) )
+    cmds.menuItem( parent = main_menu, label = "Edit wrist twist influences", command = lambda x: edit_wristtwist_influences() )
+    cmds.menuItem( parent = main_menu, label = "Pin IK handle", command = lambda x: pin_ik_handle() )
 
     # CoDMayaTools
     cmds.menuItem( parent = main_menu, divider = True, dividerLabel = "CoDMayaTools" )
     cmds.menuItem( parent = main_menu, label = "Set \"head\" as the cosmetic parent", command = lambda x: set_cosmetic_parent() )
 
-    # SEToolsPlugin
-    cmds.menuItem( parent = main_menu, divider = True, dividerLabel = "SEToolsPlugin" )
-    cmds.menuItem( parent = main_menu, label = "Reset scene", command = lambda x: SEToolsPlugin.__scene_resetanim__() )
+    # Cast
+    cmds.menuItem( parent = main_menu, divider = True, dividerLabel = "Cast" )
+    cmds.menuItem( parent = main_menu, label = "Reset scene", command = lambda x: castplugin.utilityClearAnimation() )
 
     # Rig combiner
     cmds.menuItem( parent = main_menu, divider = True, dividerLabel = "Rig combiner" )
@@ -1207,7 +1453,7 @@ def menu_items():
     if os.path.isdir( get_targets_dir() ):
         for target_rig in os.listdir( get_targets_dir() ):
             if not os.path.isdir( target_rig ):
-                if target_rig.endswith( ( ".ma", ".mb", ".semodel" ) ):
+                if target_rig.endswith( ( ".ma", ".mb", ".cast" ) ):
                     menu_new_target_rig( target_rig )
 
     # Test animations
@@ -1216,10 +1462,10 @@ def menu_items():
 
     # Create test animation entry
     if os.path.isdir( get_animations_dir() ):
-        for seanim in os.listdir( get_animations_dir() ):
-            if not os.path.isdir( seanim ):
-                if seanim.endswith( ".seanim" ):
-                    menu_new_test_animation( seanim )
+        for cast_anim in os.listdir( get_animations_dir() ):
+            if not os.path.isdir( cast_anim ):
+                if cast_anim.endswith( ".cast" ):
+                    menu_new_test_animation( cast_anim )
 
     # Donate
     cmds.menuItem( parent = main_menu, divider = True, dividerLabel = "Say thanks" )
